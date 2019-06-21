@@ -19,7 +19,6 @@ use function compact;
 use function stream_get_contents;
 use function strpos;
 use DateTimeInterface;
-use MicrosoftAzure\Storage\Common\Internal\StorageServiceSettings;
 use MicrosoftAzure\Storage\Blob\BlobSharedAccessSignatureHelper;
 use MicrosoftAzure\Storage\Common\Internal\Resources;
 
@@ -313,34 +312,23 @@ class AzureBlobStorageAdapter extends AbstractAdapter
 
     public function getTemporaryUrl(string $path, DateTimeInterface $expiration, array $options): string
     {
-        $connectionString = sprintf(
-            'DefaultEndpointsProtocol=https;AccountName=%s;AccountKey=%s;',
-            config('filesystems.azure-blob.accountname'),
-            config('filesystems.azure-blob.key')
-        );
+        $myContainer = $this->container;
 
-        dd($connectionString);
+        $accountName = config('filesystems.disks.azure-blob.accountname');
+        $key = config('filesystems.disks.azure-blob.key');
 
-        $myContainer = 'entryninja';
-
-        $settings = StorageServiceSettings::createFromConnectionString($connectionString);
-        $accountName = $settings->getName();
-        $accountKey = $settings->getKey();
         $helper = new BlobSharedAccessSignatureHelper(
             $accountName,
-            $accountKey
+            $key
         );
-        // Refer to following link for full candidate values to construct a service level SAS
-        // https://docs.microsoft.com/en-us/rest/api/storageservices/constructing-a-service-sas
+
         $sas = $helper->generateBlobServiceSharedAccessSignatureToken(
             Resources::RESOURCE_TYPE_BLOB,
-            "$myContainer/myblob",
-            'r',                            // Read
-            '2019-01-01T08:30:00Z'//,       // A valid ISO 8601 format expiry time
-            //'2016-01-01T08:30:00Z',       // A valid ISO 8601 format expiry time
-            //'0.0.0.0-255.255.255.255'
-            //'https,http'
+            "$myContainer/$path",
+            'r', // Read
+            $expiration->format('c')
         );
+
         $connectionStringWithSAS = Resources::BLOB_ENDPOINT_NAME.
             '='.
             'https://'.
@@ -360,8 +348,10 @@ class AzureBlobStorageAdapter extends AbstractAdapter
         $blobUrlWithSAS = sprintf(
             '%s%s?%s',
             (string) $blobClientWithSAS->getPsrPrimaryUri(),
-            "$myContainer/myblob",
+            "$myContainer/$path",
             $sas
         );
+
+        return $blobUrlWithSAS;
     }
 }
