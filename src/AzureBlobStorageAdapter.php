@@ -18,6 +18,10 @@ use function array_merge;
 use function compact;
 use function stream_get_contents;
 use function strpos;
+use DateTimeInterface;
+use MicrosoftAzure\Storage\Common\Internal\StorageServiceSettings;
+use MicrosoftAzure\Storage\Blob\BlobSharedAccessSignatureHelper;
+use MicrosoftAzure\Storage\Common\Internal\Resources;
 
 class AzureBlobStorageAdapter extends AbstractAdapter
 {
@@ -85,10 +89,10 @@ class AzureBlobStorageAdapter extends AbstractAdapter
         $stream->detach();
 
         return [
-            'path'      => $path,
+            'path' => $path,
             'timestamp' => (int) $response->getLastModified()->getTimestamp(),
-            'dirname'   => Util::dirname($path),
-            'type'      => 'file',
+            'dirname' => Util::dirname($path),
+            'type' => 'file',
         ];
     }
 
@@ -133,7 +137,7 @@ class AzureBlobStorageAdapter extends AbstractAdapter
     {
         $prefix = $this->applyPathPrefix($dirname);
         $options = new ListBlobsOptions();
-        $options->setPrefix($prefix . '/');
+        $options->setPrefix($prefix.'/');
         $listResults = $this->client->listBlobs($this->container, $options);
         foreach ($listResults->getBlobs() as $blob) {
             $this->client->deleteBlob($this->container, $blob->getName());
@@ -156,7 +160,7 @@ class AzureBlobStorageAdapter extends AbstractAdapter
     {
         $response = $this->readStream($path);
 
-        if ( ! isset($response['stream']) || ! is_resource($response['stream'])) {
+        if (!isset($response['stream']) || !is_resource($response['stream'])) {
             return $response;
         }
 
@@ -193,14 +197,14 @@ class AzureBlobStorageAdapter extends AbstractAdapter
         $location = $this->applyPathPrefix($directory);
 
         if (strlen($location) > 0) {
-            $location = rtrim($location, '/') . '/';
+            $location = rtrim($location, '/').'/';
         }
 
         $options = new ListBlobsOptions();
         $options->setPrefix($location);
         $options->setMaxResults($this->maxResultsForContentsListing);
 
-        if ( ! $recursive) {
+        if (!$recursive) {
             $options->setDelimiter('/');
         }
 
@@ -215,7 +219,7 @@ class AzureBlobStorageAdapter extends AbstractAdapter
             }
         }
 
-        if ( ! $recursive) {
+        if (!$recursive) {
             $result = array_merge($result, array_map([$this, 'normalizeBlobPrefix'], $response->getBlobPrefixes()));
         }
 
@@ -264,7 +268,7 @@ class AzureBlobStorageAdapter extends AbstractAdapter
     {
         $options = $config->get('blobOptions', new CreateBlockBlobOptions());
         foreach (static::$metaOptions as $option) {
-            if ( ! $config->has($option)) {
+            if (!$config->has($option)) {
                 continue;
             }
             call_user_func([$options, "set$option"], $config->get($option));
@@ -285,12 +289,12 @@ class AzureBlobStorageAdapter extends AbstractAdapter
         }
 
         return [
-            'path'      => $path,
+            'path' => $path,
             'timestamp' => (int) $properties->getLastModified()->format('U'),
-            'dirname'   => Util::dirname($path),
-            'mimetype'  => $properties->getContentType(),
-            'size'      => $properties->getContentLength(),
-            'type'      => 'file',
+            'dirname' => Util::dirname($path),
+            'mimetype' => $properties->getContentType(),
+            'size' => $properties->getContentLength(),
+            'type' => 'file',
         ];
     }
 
@@ -305,5 +309,59 @@ class AzureBlobStorageAdapter extends AbstractAdapter
     protected function normalizeBlobPrefix(BlobPrefix $blobPrefix)
     {
         return ['type' => 'dir', 'path' => $this->removePathPrefix(rtrim($blobPrefix->getName(), '/'))];
+    }
+
+    public function getTemporaryUrl(string $path, DateTimeInterface $expiration, array $options): string
+    {
+        $connectionString = sprintf(
+            'DefaultEndpointsProtocol=https;AccountName=%s;AccountKey=%s;',
+            config('filesystems.azure-blob.accountname'),
+            config('filesystems.azure-blob.key')
+        );
+
+        dd($connectionString);
+
+        $myContainer = 'entryninja';
+
+        $settings = StorageServiceSettings::createFromConnectionString($connectionString);
+        $accountName = $settings->getName();
+        $accountKey = $settings->getKey();
+        $helper = new BlobSharedAccessSignatureHelper(
+            $accountName,
+            $accountKey
+        );
+        // Refer to following link for full candidate values to construct a service level SAS
+        // https://docs.microsoft.com/en-us/rest/api/storageservices/constructing-a-service-sas
+        $sas = $helper->generateBlobServiceSharedAccessSignatureToken(
+            Resources::RESOURCE_TYPE_BLOB,
+            "$myContainer/myblob",
+            'r',                            // Read
+            '2019-01-01T08:30:00Z'//,       // A valid ISO 8601 format expiry time
+            //'2016-01-01T08:30:00Z',       // A valid ISO 8601 format expiry time
+            //'0.0.0.0-255.255.255.255'
+            //'https,http'
+        );
+        $connectionStringWithSAS = Resources::BLOB_ENDPOINT_NAME.
+            '='.
+            'https://'.
+            $accountName.
+            '.'.
+            Resources::BLOB_BASE_DNS_NAME.
+            ';'.
+            Resources::SAS_TOKEN_NAME.
+            '='.
+            $sas;
+        $blobClientWithSAS = BlobRestProxy::createBlobService(
+            $connectionStringWithSAS
+        );
+        // We can download the blob with PHP Client Library
+        // downloadBlobSample($blobClientWithSAS);
+        // Or generate a temporary readonly download URL link
+        $blobUrlWithSAS = sprintf(
+            '%s%s?%s',
+            (string) $blobClientWithSAS->getPsrPrimaryUri(),
+            "$myContainer/myblob",
+            $sas
+        );
     }
 }
